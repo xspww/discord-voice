@@ -1,0 +1,14 @@
+{
+  "name": "discord-voicechat",
+  "version": "1.0.0",
+  "description": "Discord Voice Channel Join Selfbot",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.16.1",
+    "discord.js-selfbot-v13": "^2.14.9",
+    "dotenv": "^16.4.5"
+  }
+}
