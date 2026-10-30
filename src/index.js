@@ -1,7 +1,7 @@
 const { tokens, channelIds } = require('./config');
 const { startSession } = require('./voice');
 
-console.log(`🚀 กำลังเริ่มการทำงานทั้งหมด ${channelIds.length} Session(s)...`);
+console.log(`🚀 กำลังเริ่มการทำงานทั้งหมด ${channelIds.length} Session(s) (E2EE / DAVE Protocol ready)...`);
 
 channelIds.forEach((channelId, index) => {
     // If multiple tokens provided, map by index, otherwise use the token for all sessions

@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node src/index.js"
   },
+  "engines": {
+    "node": ">=20.18.0"
+  },
   "dependencies": {
-    "@discordjs/voice": "^0.16.1",
-    "discord.js-selfbot-v13": "^2.14.9",
+    "djs-selfbot-v13": "^10.9.20",
     "dotenv": "^16.4.5"
   }
 }
