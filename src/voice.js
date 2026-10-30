@@ -1,11 +1,11 @@
 const { Client, Constants } = require('djs-selfbot-v13');
 const { selfDeaf, selfMute } = require('./config');
 
-// Discord บังคับใช้ E2EE (DAVE Protocol) กับคอลเสียง/วิดีโอทั้งหมดตั้งแต่ 1 มีนาคม 2026
-// ไลบรารี djs-selfbot-v13 เวอร์ชันใหม่รองรับ DAVE อยู่แล้ว และการเข้าห้องแบบ gateway-only
-// (ไม่ส่งสื่อ) ไม่จำเป็นต้องติดตั้ง opus / sodium / ffmpeg เพิ่มเติม
+// Discord requires E2EE (DAVE protocol) for all voice and video calls since March 1, 2026.
+// The djs-selfbot-v13 library supports DAVE. A gateway-only join (no media) does not need
+// opus, sodium, or ffmpeg.
 //
-// อ้างอิง: https://github.com/002-sans/djs-selfbot-v13
+// Reference: https://github.com/002-sans/djs-selfbot-v13
 
 const RECONNECT_DELAY_MS = 5_000;
 const RECONNECT_MAX_ATTEMPTS = 5;
@@ -17,24 +17,24 @@ async function fetchTargetChannel(client, channelId, sessionIndex) {
     const channel = await client.channels.fetch(channelId);
 
     if (!channel || (!channel.isVoice() && channel.type !== 'GUILD_VOICE' && channel.type !== 'GUILD_STAGE_VOICE')) {
-        console.error(`❌ [Session #${sessionIndex + 1}] ไม่พบห้องเสียง (Voice / Stage) สำหรับ ID: ${channelId}`);
+        console.error(`[Session #${sessionIndex + 1}] Voice or stage channel not found for ID: ${channelId}`);
         return null;
     }
 
     return channel;
 }
 
-// joinVoice ของ djs-selfbot-v13 เป็น idempotent: ถ้า session เดียวกันอยู่ในห้องเดิมอยู่แล้ว
-// จะอัปเดตเฉพาะสถานะ mute / deaf โดยไม่ต้องถอยออกแล้วเข้าใหม่
+// joinVoice in djs-selfbot-v13 is idempotent: if the same session is already in the same
+// channel, it updates mute and deaf state only.
 async function joinTargetVoice(client, channel, sessionIndex) {
-    console.log(`🔄 [Session #${sessionIndex + 1}] กำลังเข้าห้องเสียง: "${channel.name}" (เซิร์ฟเวอร์: ${channel.guild.name})...`);
+    console.log(`[Session #${sessionIndex + 1}] Joining voice channel: "${channel.name}" (server: ${channel.guild.name})...`);
 
     const session = await client.voice.joinVoice(channel, {
         mute: selfMute,
         deaf: selfDeaf,
     });
 
-    console.log(`✅ [Session #${sessionIndex + 1}] เข้าห้องเสียง "${channel.name}" (${channel.guild.name}) สำเร็จแล้ว!`);
+    console.log(`[Session #${sessionIndex + 1}] Joined voice channel "${channel.name}" (${channel.guild.name}).`);
     return session;
 }
 
@@ -43,23 +43,23 @@ async function joinWithRetry(client, channel, sessionIndex, attempt = 1) {
         await joinTargetVoice(client, channel, sessionIndex);
     } catch (err) {
         if (attempt >= RECONNECT_MAX_ATTEMPTS) {
-            console.error(`❌ [Session #${sessionIndex + 1}] เข้าห้องเสียงไม่สำเร็จหลังพยายาม ${attempt} ครั้ง:`, err.message);
+            console.error(`[Session #${sessionIndex + 1}] Failed to join voice channel after ${attempt} attempts:`, err.message);
             return;
         }
 
-        console.error(`⚠️ [Session #${sessionIndex + 1}] เข้าห้องเสียงไม่สำเร็จ (ครั้งที่ ${attempt}/${RECONNECT_MAX_ATTEMPTS}):`, err.message);
+        console.error(`[Session #${sessionIndex + 1}] Failed to join voice channel (attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS}):`, err.message);
         await sleep(RECONNECT_DELAY_MS * attempt);
         return joinWithRetry(client, channel, sessionIndex, attempt + 1);
     }
 }
 
-// คอยดูแลห้องเสียงตลอด 24/7: กลับเข้าห้องเมื่อโดนเตะ / ถูกย้ายห้อง / หลุดแบบเงียบ ๆ
+// Keep the session in the voice channel 24/7. Rejoin after a kick, a channel move, or a silent drop.
 function startMaintenanceLoop(client, channel, sessionIndex) {
     let joinInFlight = null;
 
     const dropStaleSession = () => {
-        // ล้าง reference เท่านั้น (ไม่เรียก disconnect แบบ blocking)
-        // เพื่อให้ joinVoice ไม่คิดว่า idempotent และ preJoinCleanup จะจัดการออกห้องเอง
+        // Clear the reference only. Do not call disconnect in a blocking way.
+        // joinVoice then runs preJoinCleanup to leave the old channel itself.
         if (client.voice.session) {
             client.voice.session = null;
         }
@@ -68,13 +68,12 @@ function startMaintenanceLoop(client, channel, sessionIndex) {
     const ensureConnection = () => {
         if (joinInFlight) return joinInFlight;
 
-        // ถ้า session เก่าอ้างว่ายังอยู่ในห้องนี้ แต่เราต้อง reconnect แล้ว
-        // ให้ทิ้ง session เก่าก่อน เพื่อไม่ให้ joinVoice คิดว่า idempotent แล้วไม่เข้าจริง
+        // Drop a stale session before reconnect so joinVoice does not treat it as idempotent.
         dropStaleSession();
 
         joinInFlight = joinWithRetry(client, channel, sessionIndex)
             .catch(err => {
-                console.error(`❌ [Session #${sessionIndex + 1}] เชื่อมต่อห้องเสียงใหม่ไม่สำเร็จ:`, err.message);
+                console.error(`[Session #${sessionIndex + 1}] Reconnect to voice channel failed:`, err.message);
             })
             .finally(() => {
                 joinInFlight = null;
@@ -85,42 +84,42 @@ function startMaintenanceLoop(client, channel, sessionIndex) {
 
     client.on(Constants.Events.VOICE_STATE_UPDATE, (_oldState, newState) => {
         if (newState.id !== client.user.id) return;
-        if (joinInFlight) return; // กำลัง reconnect อยู่แล้ว
+        if (joinInFlight) return; // Reconnect is already in progress.
 
-        // กรองเฉพาะ guild ของห้องนี้ เพื่อไม่ให้ voice state ของ session อื่น (guild อื่น)
-        // มากระตุ้น reconnect ผิดห้อง
+        // Handle only this channel's guild. Voice state from another session's guild must not
+        // trigger a reconnect in this session.
         if (channel.guild && newState.guild?.id && newState.guild.id !== channel.guild.id) return;
 
         if (newState.channelId === channel.id) return;
 
-        console.log(`⚠️ [Session #${sessionIndex + 1}] หลุดจากห้อง "${channel.name}"! กำลังพยายามเชื่อมต่อใหม่...`);
+        console.log(`[Session #${sessionIndex + 1}] Left voice channel "${channel.name}". Reconnecting...`);
         dropStaleSession();
         ensureConnection();
     });
 
     const watchdog = setInterval(() => {
-        // ใช้ voice state ของ guild นี้โดยเฉพาะ (ไม่ใช้ client.user.voice ซึ่งอาจเจอ state ของ guild อื่น)
+        // Use this guild's voice state only. client.user.voice can return state from another guild.
         const state = channel.guild
             ? channel.guild.voiceStates.cache.get(client.user.id)
             : client.voiceStates.cache.get(client.user.id);
         const session = client.voice.session;
 
-        // ถ้า definitely อยู่ในห้องอื่น -> reconnect
+        // The account is definitely in another channel. Reconnect.
         if (state && state.channelId && state.channelId !== channel.id) {
-            console.log(`⏰ [Session #${sessionIndex + 1}] Watchdog: ย้าย/หลุดไปห้องอื่น (${state.channelId}) กำลังเชื่อมต่อใหม่...`);
+            console.log(`[Session #${sessionIndex + 1}] Watchdog: moved to another channel (${state.channelId}). Reconnecting...`);
             dropStaleSession();
             ensureConnection();
             return;
         }
 
-        // session หายหรือหลุดแล้ว -> reconnect
+        // The session is missing or disconnected. Reconnect.
         if (!session || session.disconnected) {
-            console.log(`⏰ [Session #${sessionIndex + 1}] Watchdog: ยังไม่ได้อยู่ในห้อง "${channel.name}" กำลังเชื่อมต่อใหม่...`);
+            console.log(`[Session #${sessionIndex + 1}] Watchdog: not in voice channel "${channel.name}". Reconnecting...`);
             ensureConnection();
             return;
         }
 
-        // state ไม่ทราบ (cache lag) หรืออยู่ห้องเดิม -> ถือว่าเชื่อมต่ออยู่ ไม่ reconnect
+        // State is unknown (cache lag) or the session is still in this channel. Keep it.
     }, WATCHDOG_INTERVAL_MS);
     watchdog.unref();
 }
@@ -130,7 +129,7 @@ async function startSession(token, channelId, sessionIndex) {
 
     client.on('ready', async () => {
         console.log(`==================================================`);
-        console.log(`[+] Session #${sessionIndex + 1} ล็อกอินสำเร็จ: ${client.user.tag} (${client.user.id})`);
+        console.log(`[+] Session #${sessionIndex + 1} logged in: ${client.user.tag} (${client.user.id})`);
         console.log(`==================================================`);
 
         try {
@@ -140,12 +139,12 @@ async function startSession(token, channelId, sessionIndex) {
             await joinWithRetry(client, channel, sessionIndex);
             startMaintenanceLoop(client, channel, sessionIndex);
         } catch (err) {
-            console.error(`❌ [Session #${sessionIndex + 1}] เกิดข้อผิดพลาด:`, err.message);
+            console.error(`[Session #${sessionIndex + 1}] Error:`, err.message);
         }
     });
 
     client.login(token).catch(err => {
-        console.error(`❌ [Session #${sessionIndex + 1}] ล็อกอินล้มเหลว:`, err.message);
+        console.error(`[Session #${sessionIndex + 1}] Login failed:`, err.message);
     });
 }
 
