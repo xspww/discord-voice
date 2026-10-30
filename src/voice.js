@@ -86,6 +86,11 @@ function startMaintenanceLoop(client, channel, sessionIndex) {
     client.on(Constants.Events.VOICE_STATE_UPDATE, (_oldState, newState) => {
         if (newState.id !== client.user.id) return;
         if (joinInFlight) return; // กำลัง reconnect อยู่แล้ว
+
+        // กรองเฉพาะ guild ของห้องนี้ เพื่อไม่ให้ voice state ของ session อื่น (guild อื่น)
+        // มากระตุ้น reconnect ผิดห้อง
+        if (channel.guild && newState.guild?.id && newState.guild.id !== channel.guild.id) return;
+
         if (newState.channelId === channel.id) return;
 
         console.log(`⚠️ [Session #${sessionIndex + 1}] หลุดจากห้อง "${channel.name}"! กำลังพยายามเชื่อมต่อใหม่...`);
@@ -94,8 +99,10 @@ function startMaintenanceLoop(client, channel, sessionIndex) {
     });
 
     const watchdog = setInterval(() => {
-        // client.user.voice คืน voice state ที่ถูกต้องทั้ง guild และ DM/Group DM
-        const state = client.user?.voice;
+        // ใช้ voice state ของ guild นี้โดยเฉพาะ (ไม่ใช้ client.user.voice ซึ่งอาจเจอ state ของ guild อื่น)
+        const state = channel.guild
+            ? channel.guild.voiceStates.cache.get(client.user.id)
+            : client.voiceStates.cache.get(client.user.id);
         const session = client.voice.session;
 
         // ถ้า definitely อยู่ในห้องอื่น -> reconnect
