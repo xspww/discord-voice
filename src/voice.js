@@ -57,8 +57,20 @@ async function joinWithRetry(client, channel, sessionIndex, attempt = 1) {
 function startMaintenanceLoop(client, channel, sessionIndex) {
     let joinInFlight = null;
 
+    const dropStaleSession = () => {
+        // ล้าง reference เท่านั้น (ไม่เรียก disconnect แบบ blocking)
+        // เพื่อให้ joinVoice ไม่คิดว่า idempotent และ preJoinCleanup จะจัดการออกห้องเอง
+        if (client.voice.session) {
+            client.voice.session = null;
+        }
+    };
+
     const ensureConnection = () => {
         if (joinInFlight) return joinInFlight;
+
+        // ถ้า session เก่าอ้างว่ายังอยู่ในห้องนี้ แต่เราต้อง reconnect แล้ว
+        // ให้ทิ้ง session เก่าก่อน เพื่อไม่ให้ joinVoice คิดว่า idempotent แล้วไม่เข้าจริง
+        dropStaleSession();
 
         joinInFlight = joinWithRetry(client, channel, sessionIndex)
             .catch(err => {
@@ -73,20 +85,35 @@ function startMaintenanceLoop(client, channel, sessionIndex) {
 
     client.on(Constants.Events.VOICE_STATE_UPDATE, (_oldState, newState) => {
         if (newState.id !== client.user.id) return;
+        if (joinInFlight) return; // กำลัง reconnect อยู่แล้ว
         if (newState.channelId === channel.id) return;
 
         console.log(`⚠️ [Session #${sessionIndex + 1}] หลุดจากห้อง "${channel.name}"! กำลังพยายามเชื่อมต่อใหม่...`);
+        dropStaleSession();
         ensureConnection();
     });
 
     const watchdog = setInterval(() => {
-        const state = client.voiceStates.cache.get(client.user.id);
+        // client.user.voice คืน voice state ที่ถูกต้องทั้ง guild และ DM/Group DM
+        const state = client.user?.voice;
         const session = client.voice.session;
 
-        if (state?.channelId === channel.id && session && !session.disconnected) return;
+        // ถ้า definitely อยู่ในห้องอื่น -> reconnect
+        if (state && state.channelId && state.channelId !== channel.id) {
+            console.log(`⏰ [Session #${sessionIndex + 1}] Watchdog: ย้าย/หลุดไปห้องอื่น (${state.channelId}) กำลังเชื่อมต่อใหม่...`);
+            dropStaleSession();
+            ensureConnection();
+            return;
+        }
 
-        console.log(`⏰ [Session #${sessionIndex + 1}] Watchdog: ยังไม่ได้อยู่ในห้อง "${channel.name}" กำลังเชื่อมต่อใหม่...`);
-        ensureConnection();
+        // session หายหรือหลุดแล้ว -> reconnect
+        if (!session || session.disconnected) {
+            console.log(`⏰ [Session #${sessionIndex + 1}] Watchdog: ยังไม่ได้อยู่ในห้อง "${channel.name}" กำลังเชื่อมต่อใหม่...`);
+            ensureConnection();
+            return;
+        }
+
+        // state ไม่ทราบ (cache lag) หรืออยู่ห้องเดิม -> ถือว่าเชื่อมต่ออยู่ ไม่ reconnect
     }, WATCHDOG_INTERVAL_MS);
     watchdog.unref();
 }
